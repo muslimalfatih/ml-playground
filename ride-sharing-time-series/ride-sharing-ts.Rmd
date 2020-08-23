@@ -1,0 +1,543 @@
+---
+title: "Time Series On Ride Sharing"
+author: "Muslim Al Fatih"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: 
+        collapsed: false
+    number_sections: false
+    theme: flatly
+    highlight: breezedark
+  fig_caption: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Scotty is a ride-sharing business that operating in several big cities in Turkey. The company provides motorcycles ride-sharing service for Turkey’s citizen, and really value the efficiency in traveling through the traffic–the apps even give some reference to Star Trek “beam me up” in their order buttons.
+
+Scotty provided us with real-time transaction dataset. With this dataset, we are going to help them in solving some forecasting and classification problems in order to improve their business processes.
+
+It’s almost the end of 2017 and we need to prepare a forecast model to helps Scotty ready for the end year’s demands. Unfortunately, Scotty is not old enough to have last year data for December, so we can not look back at past demands to prepare forecast for December’s demands. Fortunately, you already know that time series analysis is more than enough to help us to forecast! But, as an investment for the business’ future, we need to develop an automated forecasting framework so we don’t have to meddling with forecast model selection anymore in the future!
+
+## Library
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(lubridate)
+library(tidyverse)
+library(forecast)
+library(purrr)
+library(yardstick)
+library(recipes)
+library(magrittr)
+library(padr)
+library(tidyr)
+library(ggpubr)
+library(timetk)
+library(tidyquant)
+library(plotly)
+library(ggplot2)
+
+```
+
+## Import Data
+```{r}
+ride_df <- read.csv("data/data-train.csv")
+
+glimpse(ride_df)
+```
+
+We would only use two variables, which are the time and area.
+
+```{r}
+ride_df %<>% 
+  select(c(start_time, src_sub_area))
+
+glimpse(ride_df)
+```
+
+```{r}
+unique(ride_df$src_sub_area)
+```
+
+For this time series case, we need to round the time hourly.
+
+```{r}
+ride_df$start_time <- as.POSIXct(ride_df$start_time, format="%Y-%m-%dT%H:%M:%SZ")
+ride_df$start_time <- floor_date(ride_df$start_time, unit="hour")
+```
+
+Next, we need to count how many demand on the specific hour and area.
+
+```{r}
+ride_df %<>% 
+group_by(src_sub_area, start_time) %>% 
+  mutate(demand = n()) %>% 
+ungroup()
+
+```
+
+In time series, we aren't permitted to have missing time for time series modeling, we need to do padding and replaced the demand in that missing time with zero value.
+
+```{r message=FALSE, warning=FALSE}
+min_date <- min(ride_df$start_time)
+start_val <- make_datetime(year = year(min_date), month=month(min_date), day=day(min_date), hour = 0)
+
+max_date <- max(ride_df$start_time)
+end_val <- make_datetime(year = year(max_date), month=month(max_date), day=day(max_date), hour = 23)
+
+ride_df %<>% 
+  group_by(src_sub_area) %>% 
+  mutate(demand = replace_na(demand,0)) %>%
+  pad(start_val = start_val, end_val = end_val) %>%
+  ungroup() %>% 
+  distinct()
+```
+
+```{r}
+ride_df %<>% 
+  group_by(src_sub_area) %>% 
+  mutate(demand = replace_na(demand,0))
+
+head(ride_df)
+```
+
+Visualize the demand data per sub area.
+```{r warning=FALSE}
+ggplotly(ggplot(ride_df,aes(x = start_time, y = demand)) +
+           geom_line(aes(col = src_sub_area)) +
+           labs(x = "", y = "Order Request",title = "Order Demand by Sub Area") +
+           facet_wrap(~ src_sub_area, scale = "free_y", ncol = 1) + 
+           theme_tq() +
+           scale_colour_tq() +
+           theme(legend.position = "none")
+         )
+```
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+# Decompose the data to check the seasonal, trend and error from the data from ts object with daily and weekly seasonality:
+daily <- ride_df %>% filter(src_sub_area == "sxk97") %>% .$demand %>% ts(frequency = 24)
+
+autoplot(decompose(daily)) + labs(title = "Decomposition on Daily Basis") +   theme(legend.position = "none",plot.title = element_text(hjust = 0.5))
+```
+
+```{r eval=FALSE, include=FALSE}
+weekly <- ride_df %>% filter(src_sub_area == "sxk97") %>% .$demand %>% ts(frequency = 24*7)
+
+autoplot(decompose(weekly)) + labs(title = "Decomposition on Weekly Basis") +   theme(legend.position = "none",plot.title = element_text(hjust = 0.5))
+```
+
+The trend that resulted from the decomposition is not smooth enough that might be caused by uncaptured extra seasonality, so it can be considered as multi-seasonal data. So that, we need to try another option by creating the multiple time series object, `msts` with daily and weekly seasonality:
+
+```{r}
+daily_weekly <- ride_df %>% filter(src_sub_area == "sxk97") %>% .$demand %>% msts(.,seasonal.periods = c(24,24*7))
+
+autoplot(mstl(daily_weekly)) + labs(title = "Decomposition on Daily and Weekly Basis") +theme(legend.position = "none",plot.title = element_text(hjust = 0.5))
+
+```
+
+I use a squared scale in order to clarify the pattern. Create a data visualization of one of the sub-areas to identify emerging seasonal patterns. 
+
+```{r}
+sxk97 <- ride_df %>% filter(src_sub_area == "sxk97") %>% .$demand
+
+sxk97_daily <- ggseasonplot(ts(sxk97,frequency = 24),polar = T) +
+  theme(legend.position = "none") +
+  labs(title = "SXK97 Daily",x = "Hour") +
+  scale_y_sqrt()
+
+sxk97_w <- ride_df %>% filter(src_sub_area == "sxk97") %>% 
+  mutate(date = format(start_time,"%Y/%m/%d")) %>% 
+  group_by(date) %>% 
+  mutate(demand = sum(demand)) %>% 
+  select(c(date,demand)) %>% 
+  distinct()
+
+sxk97_weekly <- ggseasonplot(ts(sxk97_w$demand,frequency = 7),polar = T) +
+  theme(legend.position = "none") +
+  labs(title = "SXK97 Weekly",x =NULL) +
+  scale_y_sqrt() 
+
+ggarrange(sxk97_daily, sxk97_weekly, ncol=2, nrow=1)
+```
+
+```{r}
+sxk9e <- ride_df %>% filter(src_sub_area == "sxk9e") %>% .$demand
+
+sxk9e_daily <- ggseasonplot(ts(sxk9e,frequency = 24),polar = T) +
+  theme(legend.position = "none") +
+  labs(title = "SXK9E Daily",x = "Hour") +
+  scale_y_sqrt()
+
+sxk9e_w <- ride_df %>% filter(src_sub_area == "sxk9e") %>% 
+  mutate(date = format(start_time,"%Y/%m/%d")) %>% 
+  group_by(date) %>% 
+  mutate(demand = sum(demand)) %>% 
+  select(c(date,demand)) %>% 
+  distinct()
+
+sxk9e_weekly <- ggseasonplot(ts(sxk9e_w$demand,frequency = 7),polar = T) +
+  theme(legend.position = "none") +
+  labs(title = "SXK9E Weekly",x =NULL) +
+  scale_y_sqrt() 
+
+ggarrange(sxk9e_daily, sxk9e_weekly, ncol=2, nrow=1)
+```
+
+```{r}
+sxk9s <- ride_df %>% filter(src_sub_area == "sxk9s") %>% .$demand
+
+sxk9s_daily <- ggseasonplot(ts(sxk9s,frequency = 24),polar = T) +
+  theme(legend.position = "none") +
+  labs(title = "SXK9S Daily",x = "Hour") +
+  scale_y_sqrt()
+
+sxk9s_w <- ride_df %>% filter(src_sub_area == "sxk9s") %>% 
+  mutate(date = format(start_time,"%Y/%m/%d")) %>% 
+  group_by(date) %>% 
+  mutate(demand = sum(demand)) %>% 
+  select(c(date,demand)) %>% 
+  distinct()
+
+sxk9s_weekly <- ggseasonplot(ts(sxk9s_w$demand,frequency = 7),polar = T) +
+  theme(legend.position = "none") +
+  labs(title = "SXK9S Weekly",x =NULL) +
+  scale_y_sqrt() 
+
+ggarrange(sxk9s_daily, sxk9s_weekly, ncol=2, nrow=1)
+```
+
+On the daily pattern plot, we can see that the highest demand is at 17-19 at night. While the lowest demand is at 5-6 in the morning. On the plot of the weekly pattern (starting from Sunday morning at 12 o'clock), we can see that the highest demand appears on Friday or Saturday.
+
+I decided to use only the daily and weekly patterns in this modeling. This is because the monthly pattern is not very visible and the observations on the dataset are only for 2 months.
+
+# Data Preprocessing
+## Cross Validation
+
+Next, do Cross Validation by dividing the data into Train data (to train the model) and Test data (to evaluate the model). Test data were obtained from observations during the last 1 week and the rest was entered into the Train data.
+
+Determine the beginning and end of the train and test data.
+```{r}
+test_size <- 24*7
+
+test_end <- max(ride_df$start_time)
+test_start <- test_end - hours(test_size) + hours(1)
+
+train_end <- test_start - hours(1)
+train_start <- min(ride_df$start_time)
+
+intrain <- interval(train_start, train_end)
+intest <- interval(test_start, test_end)
+```
+
+Then, we would label `start_time` whether it is a train or test dataset
+```{r}
+ride_df %<>%
+  mutate(sample = case_when(
+    start_time %within% intrain ~ "train",
+    start_time %within% intest ~ "test"
+  )) %>% 
+  drop_na() %>% 
+  mutate(sample = factor(sample, levels = c("train", "test")))
+
+head(ride_df)
+```
+
+## Data Scaling
+Use `recipes` packages to do scaling and prevent outlier on our model. We need to change our data into wide format because `recipes` package only accept columnwise format. 
+
+```{r}
+ride_df %<>%
+  spread(src_sub_area, demand)
+
+recipe <- recipe(~., filter(ride_df, start_time %within% intrain)) %>% 
+  step_sqrt(all_numeric()) %>%
+  step_center(all_numeric()) %>%
+  step_scale(all_numeric()) %>%
+  prep()
+
+# Execute calling function
+ride_df <- bake(recipe, ride_df)
+
+# Converts data back to high format
+ride_df %<>%
+  gather(src_sub_area, demand, -start_time,-sample)
+
+head(ride_df)
+```
+After scaling, don't forget to create a function to return the data to the actual scaled value.
+
+```{r}
+recipe_revert <- function(vector, rec, varname) {
+  rec_center <- rec$steps[[2]]$means[varname]
+  rec_scale <- rec$steps[[3]]$sds[varname]
+  results <- (vector * rec_scale + rec_center) ^ 2
+  results <- round(results)
+  results
+}
+```
+
+Next, nest the Training data and Test data to simplify the model selection process.
+
+```{r}
+ride_df %<>%
+  group_by(src_sub_area, sample) %>%
+  nest(data = c(start_time, demand)) %>%
+  pivot_wider(names_from = sample, values_from = data)
+
+head(ride_df)
+```
+
+# Modelling & Forecasting
+As we know before, there are two option of data representation, a `ts` object with daily seasonality and a `msts` with daily and weekly seasonality. To apply them into our data, then we need to make a data frame which contain the object and the function.
+
+```{r}
+# Make a list of object functions
+data_funs <- list(
+  ts = function(x) ts(x$demand, frequency = 24),
+  msts = function(x) msts(x$demand, seasonal.periods = c(24, 24 * 7))
+)
+
+# Change the form of the function into a data frame
+# that is ready to be combined with the dataset
+data_funs %<>%
+  rep(length(unique(ride_df$src_sub_area))) %>%
+  enframe("data_fun_name", "data_fun") %>%
+  mutate(src_sub_area =
+    sort(rep(unique(ride_df$src_sub_area), length(unique(.$data_fun_name))))
+  )
+
+data_funs
+```
+Combine them into one dataframe:
+```{r message=FALSE, warning=FALSE}
+ride_df %<>% left_join(data_funs)
+
+head(ride_df)
+```
+
+
+Make a list of model algorithms that you want to apply to the dataset. I used the model:
+
+1. Exponential Smoothing State Space Model (`ets`)
+2. Seasonal and Trend decomposition using Loess (`stlm`)
+3. Trigonometric seasonality, Box-Cox transformation, ARMA errors, Trend and Seasonal components (`tbats`)
+4. Autoregressive integrated moving average (`arima`)
+5. Holt Winter (`holt.winter`)
+
+I'll try all of these models, then see which model gives the smallest error when the model makes predictions. Especially for the `ets` and `arima` models, they are not applied to multiple seasonal time series objects because these models are not compatible with these objects.
+
+```{r}
+models <- list(
+  stlm = function(x) stlm(x),
+  tbats = function(x) tbats(x, use.box.cox = FALSE, 
+                  use.trend = TRUE, 
+                  use.damped.trend = TRUE,
+                  use.parallel = FALSE),
+  holt.winter = function(x) HoltWinters(x,seasonal = "additive"),
+  auto.arima = function(x) auto.arima(x),
+  ets = function(x) ets(x)
+)
+
+models %<>%
+  rep(length(unique(ride_df$src_sub_area))) %>%
+  enframe("model_name", "model") %>%
+  mutate(src_sub_area =
+    sort(rep(unique(ride_df$src_sub_area), length(unique(.$model_name))))
+  )
+
+head(models)
+```
+Then combine models with data:
+```{r message=FALSE, warning=FALSE}
+ride_df %<>% 
+  left_join(models) %>% 
+  filter(!(model_name == "ets" & data_fun_name == "msts"),
+         !(model_name == "auto.arima" & data_fun_name == "msts"))
+
+head(ride_df)
+```
+
+Apply time series object creation functions and modeling algorithms to datasets.
+
+```{r}
+# ride_df %<>%
+#   mutate(
+#     params = map(train, ~ list(x = .x)),
+#     data = invoke_map(data_fun, params),
+#     params = map(data, ~ list(x = .x)),
+#     fitted = invoke_map(model, params)
+#   ) %>%
+#   select(-data, -params)
+# 
+# ride_model <- saveRDS(ride_df, "ride_model.RDS")
+
+ride_df <- readRDS("ride_model.RDS")
+
+head(ride_df)
+```
+
+# Evaluation
+
+Use` mae_vec` from `yardstick` package to measure the train and test error.
+```{r}
+ride_df %<>% 
+  mutate(MAE_test =
+    map(fitted, ~ forecast(.x, h = 24 * 7)) %>%
+    map2_dbl(test, ~ mae_vec(truth = recipe_revert(.y$demand,recipe,src_sub_area), estimate = recipe_revert(.x$mean,recipe,src_sub_area)))) %>%
+  arrange(src_sub_area, MAE_test)
+
+ride_df %<>% 
+  mutate(MAE_train =
+    map(fitted, ~ forecast(.x, h = 24 * 7)) %>%
+    map2_dbl(train, ~ mae_vec(truth = recipe_revert(.y$demand,recipe,src_sub_area), estimate = recipe_revert(.x$fitted,recipe,src_sub_area)))) %>%
+  arrange(src_sub_area, MAE_test)
+```
+
+```{r}
+ride_df %>%
+  select(src_sub_area, ends_with("_name"), MAE_test, MAE_train)
+```
+
+Create a visualization that shows how the predicted results differ from each model when compared to real demand data.
+
+```{r}
+ride_df_test <- ride_df %>%
+  mutate(
+    forecast =
+      map(fitted, ~ forecast(.x, h = 24 * 7)) %>%
+      map2(test, ~ tibble(
+        start_time = .y$start_time,
+        demand = as.vector(.x$mean)
+      )),
+    key = paste(data_fun_name, model_name, sep = "-")
+  )
+```
+
+Convert before visualize into visualization step.
+```{r warning=FALSE}
+ride_df_test %<>%
+  select(src_sub_area, key, actual = test, forecast) %>%
+  spread(key, forecast) %>%
+  gather(key, value, -src_sub_area) %>%
+  unnest(value) %>%
+  mutate(demand = recipe_revert(demand,recipe,src_sub_area))
+
+# Visualization step
+
+ggplotly(ggplot(ride_df_test,aes(x = start_time, y = demand)) +
+           geom_line(data = ride_df_test %>% filter(key == "actual"),aes(y = demand),alpha = 0.2,size =  0.8) +
+           geom_line(data = ride_df_test %>% filter(key != "actual"),aes(frame = key,col = key)) +
+           labs(x = "", y = "Order)",title = "Comparison Of Model Prediction Results", frame = "Models") + facet_wrap(~ src_sub_area, scale = "free_y", ncol = 1) +
+           theme_tq() +
+           scale_colour_tq()+
+           theme(legend.position = "none"))
+
+head(ride_df_test)
+```
+
+Choose the model that has the smallest prediction error for each sub-area then combining into test and train data.
+```{r}
+# Smallest error selection
+ride_df %<>%
+  select(-fitted) %>%
+  group_by(src_sub_area) %>%
+  filter(MAE_test == min(MAE_test)) %>%
+  ungroup()
+
+# Combining test and train data
+ride_df %<>%
+  mutate(fulldata = map2(train, test, ~ bind_rows(.x, .y))) %>%
+  select(src_sub_area, fulldata, everything(), -train, -test)
+
+ride_df
+```
+
+Then we would do nested fitting. The `tbats` model has the smallest prediction error for each sub-area. Next, combine the Test data and Train data to create a final model. Modeling with the `tbats` model of the combined dataset, then predicting demand for the next 7 days.
+
+```{r}
+# Running model
+# ride_df %<>%
+#   mutate(
+#     params = map(fulldata, ~ list(x = .x)),
+#     data = invoke_map(data_fun, params),
+#     params = map(data, ~ list(x = .x)),
+#     fitted = invoke_map(model, params)
+#   ) %>%
+#   select(-data, -params)
+# 
+# ride_bestmodel <- saveRDS(ride_df, "ride_bestmodel.RDS")
+
+ride_df <- readRDS("ride_bestmodel.RDS")
+
+# Make Prediction
+ride_df %<>%
+  mutate(forecast =
+    map(fitted, ~ forecast(.x, h = 24 * 7)) %>%
+    map2(fulldata, ~ tibble(
+      start_time = tk_make_future_timeseries(.y$start_time, 24 * 7),
+      demand = as.vector(.x$mean)
+    ))
+  )
+
+ride_df
+```
+
+
+Open data nests and create visualizations of prediction results.
+
+```{r}
+ride_df %<>%
+  select(src_sub_area, actual = fulldata, forecast) %>%
+  gather(key, value, -src_sub_area) %>%
+  unnest(value) %>%
+  mutate(demand = recipe_revert(demand,recipe,src_sub_area))
+
+# Visualization
+ggplotly(ggplot(ride_df,aes(x = start_time, y = demand, colour = key)) +
+           geom_line() +
+           labs(y = NULL, x = NULL, colour = NULL, title = "Model Prediction Results") +
+           facet_wrap(~ src_sub_area, scale = "free_y", ncol = 1) +
+           theme_tq())
+```
+
+Getting our final forecast result.
+```{r}
+ride_actual <- ride_df %>% 
+  filter(key == "actual")
+
+ride_forecast <- ride_df %>% 
+  filter(key == "forecast") %>%
+  filter(start_time >= "2017-12-03 00:00:00")
+
+ride_final <- rbind(ride_actual, ride_forecast)
+
+data_submit <- ride_final %>% 
+  filter(key == "forecast") %>% 
+  rename(datetime = start_time) %>% 
+  select(- key)
+
+#write.csv(data_submit, "data-submission.csv")
+
+head(data_submit)
+
+```
+
+
+# Conclusion
+The forecast from `tbats` models showing a better performance for all and each sub-area. This online transportation case has two types of seasonality, daily and weekly. So we use `stlm`, `tbats`, and `HoltWinter`.
+
+
+# Reference
+- Algoritma Tech Blog. (2019) [Purr-Operly Fitting Multiple Time Series Model](https://algotech.netlify.app/blog/purrr-operly-fitting-multiple-time-series-model/)
+- Rob J Hyndman and George Athanasopoulos. (2018) [Forecasting: Principles and Practice](https://otexts.com/fpp2)
+- David Burba. (2018) [An overview of time series forecasting models](https://towardsdatascience.com/an-overview-of-time-series-forecasting-models-a2fa7a358fcb)
+
+

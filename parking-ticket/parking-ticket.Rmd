@@ -1,0 +1,250 @@
+---
+title: "Parking Ticket"
+author: "Muslim Al Fatih"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: 
+        collapsed: false
+    number_sections: false
+    theme: flatly
+    highlight: breezedark
+  fig_caption: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+This data from [Toronto Open Data Portal](https://open.toronto.ca/dataset/parking-tickets/)
+
+## Exploratory Data
+
+### Load Library
+```{r message=FALSE, warning=FALSE}
+library(opendatatoronto)
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+```
+
+```{r message=FALSE, warning=FALSE}
+parking_1 <- read.csv("./data/Parking_Tags_Data_2018_1.csv", stringsAsFactors = F)
+parking_2 <- read.csv("./data/Parking_Tags_Data_2018_2.csv", stringsAsFactors = F)
+parking_3 <- read.csv("./data/Parking_Tags_Data_2018_3.csv", stringsAsFactors = F)
+
+parking <- rbind(parking_1, parking_2, parking_3)
+
+options("scipen"=100, "digits"=4)
+
+```
+
+
+```{r}
+glimpse(parking)
+```
+
+```{r}
+dim(parking)
+```
+
+```{r}
+parking$date_of_infraction <- as.Date(as.character(parking$date_of_infraction), "%Y%m%d")
+parking$time_of_infraction <- sprintf("%04d", parking$time_of_infraction)
+parking$time_of_infraction <- format(strptime(parking$time_of_infraction, format="%H%M"), format = "%H:%M")
+```
+
+
+```{r}
+summary(parking$date_of_infraction)
+#summary(parking$set_fine_amount)
+```
+
+
+```{r}
+parking <- parking[complete.cases(parking[,-1]),]
+```
+
+```{r}
+ggplot(aes(x = date_of_infraction), data = parking) + geom_histogram(bins = 48, color = 'black', fill = '#00AFBB') +
+  xlab('Date of Interaction') +
+  ggtitle('Histogram of Infraction Date', ) +
+  theme_economist() + scale_fill_economist()
+```
+```{r}
+parking$time_of_infraction <- as.POSIXlt(parking$time_of_infraction, format="%H:%M")$hour
+```
+
+```{r}
+ggplot(aes(x = time_of_infraction), data = parking) + geom_histogram(bins = 24, color = 'black', fill = '#00AFBB') +
+  xlab('Time of Interaction') +
+  ggtitle('Histogram of Infraction Time') +
+  theme_economist() + scale_fill_economist()
+
+```
+
+```{r}
+sort(table(parking$set_fine_amount))
+
+ggplot(aes(x = set_fine_amount), data = parking) + geom_histogram(bins = 100, color = 'black', fill = '#00AFBB') +
+  xlab('Fine Amount') +
+  ggtitle('Histogram of Fine Amount') +
+  theme_economist() + scale_fill_economist()
+```
+```{r eval=FALSE, include=FALSE}
+# parking_day <- dplyr::summarise(date_group, count = n(), 
+#                                    total_day = sum(set_fine_amount), 
+#                                    na.rm = TRUE)
+# parking_day[order(parking_day$count),]
+```
+
+The most common amount is $30, then $50, then $40. I believe the "0" value means the parking tickets were cancelled.
+So which dates have the most number of infractions? and which dates have the least number of infractions?
+
+April 1st has the most number of infractions, and December 25 has the least number of parking tickets issued. I wonder why.  
+
+```{r}
+parking$day_of_week <- weekdays(as.Date(parking$date_of_infraction))
+```
+
+
+```{r message=FALSE, warning=FALSE}
+weekday_group <- group_by(parking, day_of_week)
+parking_weekday <- summarise(weekday_group, count = n(), 
+                                       total_day = sum(set_fine_amount))
+                                   
+parking_weekday$day_of_week <- ordered(parking_weekday$day_of_week, levels = c('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'))
+
+ggplot(aes(x = day_of_week, y = count), data = parking_weekday) +
+  geom_bar(stat = 'identity', color = 'black', fill = '#00AFBB') +
+  xlab('') +
+  ylab('Number of Infractions') +
+  ggtitle('Infractions Day of Week') +
+  theme_economist() + scale_fill_economist()
+```
+
+Apparently, less infractions happened in the weekend than during the weekdays.
+
+Now let's look at what the infractions are. Because there are more than 200 different infractions, it makes sense to only look at the top 10.
+
+```{r message=FALSE, warning=FALSE}
+infraction_group <- group_by(parking, infraction_description, infraction_code)
+parking_infr <- summarise(infraction_group, count = n()) 
+parking_infr <- head(parking_infr[order(parking_infr$count, decreasing = TRUE),], n = 10)
+parking_infr
+```
+
+
+```{r}
+ggplot(aes(x = reorder(infraction_description, count), y = count), data = parking_infr) +
+  geom_bar(stat = 'identity',  fill = '#00AFBB') +
+  theme_tufte() +
+  theme(axis.text = element_text(size = 10, face = 'bold')) +
+  coord_flip() +
+  xlab('') +
+  ylab('Total Number of Infractions') +
+  ggtitle("Top 10 Infractions") +
+  theme_economist() + scale_fill_economist()
+```
+
+```{r message=FALSE, warning=FALSE}
+location_group <- group_by(parking, location2)
+parking_lo <- summarise(location_group, total = sum(set_fine_amount),
+                                  count = n())
+parking_lo <- head(parking_lo[order(parking_lo$count, decreasing = TRUE), ], n=10)
+```
+
+```{r}
+ggplot(aes(x = reorder(location2, count), y = count), data = parking_lo) +
+  geom_bar(stat = 'identity', fill = '#00AFBB') +
+  theme_tufte() +
+  theme(axis.text = element_text(size = 10, face = 'bold')) +
+  coord_flip() +
+  xlab('') +
+  ylab('Total Number of Infractions') +
+  ggtitle("Top 10 Locations") +
+  theme_economist() + scale_fill_economist()
+```
+
+How about the trend? Is there any infraction type increase or decrease over time?
+
+```{r}
+parking_infr_1 <- parking %>%
+  filter(infraction_description %in% parking_infr$infraction_description)
+```
+
+```{r message=FALSE, warning=FALSE}
+date_in_group <- group_by(parking_infr_1, infraction_description, date_of_infraction)
+parking_infr_1 <- summarise(date_in_group, total =
+                                      sum(set_fine_amount),
+                                      count = n())
+```
+
+```{r}
+ggplot(aes(x = date_of_infraction, y = count, color = infraction_description), data = parking_infr_1) +
+  geom_jitter(alpha = 0.05) +
+  geom_smooth(method = 'loess') +
+  xlab('Date') +
+  ylab('Number of Infractions') +
+  ggtitle('Time Series of the Top Infractions') +
+  scale_y_log10()
+```
+
+This is not a good looking graph. Most of the top infractions have been steady over time. only "PARK FAIL TO DISPLAY RECEIPT" had dropped since fall, and "PARK MACHINE-REQD FEE NOT PAID" had an increase since October. Does it have anything to do with the season? or weather? Or simply more park machines broken toward the end of the year?
+
+```{r message=FALSE, warning=FALSE}
+week_time_group <- group_by(parking, day_of_week, time_of_infraction)
+parking_week_time <- summarise(week_time_group, time_sum =
+                                      sum(set_fine_amount),
+                                      count = n())
+```
+
+```{r}
+parking_week_time$day_of_week <- ordered(parking_week_time$day_of_week, levels = c('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'))
+ggplot(aes(x = time_of_infraction, y = count, color = day_of_week), data = parking_week_time) +
+  geom_line(size = 2.5, alpha = 0.7) +
+  geom_point(size = 0.5) + 
+  xlab('Hour(24 hour clock)') +
+  ylab('Number of Infractions') +
+  ggtitle('Infractions Time of the Day') +
+  theme_economist()
+```
+
+This is a much better looking graph. the highest counts are around noon time during the weekday, this trend changed during the weekend.
+
+Now let me drill down to the top 10 infractions.
+
+```{r}
+top_10 <- c('PARK-SIGNED HWY-PROHIBIT DY/TM', 'PARK ON PRIVATE PROPERTY', 'PARK PROHIBITED TIME NO PERMIT', 'PARK FAIL TO DISPLAY RECEIPT', 'PARK MACHINE-REQD FEE NOT PAID', 'PARK - LONGER THAN 3 HOURS ', 'STOP-SIGNED HWY-PROHIBIT TM/DY', 'STAND VEH.-PROHIBIT TIME/DAY', 'STOP-SIGNED HIGHWAY-RUSH HOUR', 'PARK-VEH. W/O VALID ONT PLATE')
+top_10
+```
+
+```{r message=FALSE, warning=FALSE}
+parking_top_10 <- parking %>%
+  filter(infraction_description %in% top_10)
+top_10_groups <- group_by(parking_top_10, infraction_description, day_of_week, time_of_infraction)
+parking_top_10 <- summarise(top_10_groups, total =
+                                      sum(set_fine_amount),
+                                      count = n())
+```
+
+
+```{r message=FALSE, warning=FALSE}
+parking_top_10$day_of_week <- ordered(parking_top_10$day_of_week, levels = c('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'))
+ggplot(aes(x = time_of_infraction, y = count, color = day_of_week), data = parking_top_10) +
+  geom_line(size = 1.5) +
+  geom_point(size = 0.5) +
+  xlab('Hour(24 hour clock)') +
+  ylab('Number of Infractions') +
+  ggtitle('Infractions Time of the Day') +
+  scale_y_log10() +
+  facet_wrap(~infraction_description)
+```
+
+I found two sharp curved infractions interesting, one is "STOP-SIGNED HIGHWAY RUSH-HOUR", there are two peak infraction hours around 8am and 4pm during the weekdays, the weekend is very quiet. It makes sense as it labels as "RUSH-HOUR". Another is 'PARK-LONGER THAN 3 HOURS', this is the only infractions happened more during the early hours around 4am, this applies to weekends as well as weekdays. 
+
+It seems to me that residents live in an appartment building without a garage will be ticketed for overnight parking on their street if their street has no on-street permits. That's why most of the infractions happened in the early hours of the day.  
+
+The above analysis doesn't represent all the problems and areas since not every illegally parked car will be reported. It does give a general idea and might start a conversation on how and where the City of Toronto should intervene.

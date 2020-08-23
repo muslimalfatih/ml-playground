@@ -1,0 +1,227 @@
+---
+title: "Customer Segmentation"
+author: "Muslim Al Fatih"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: 
+        collapsed: false
+    number_sections: false
+    theme: flatly
+    highlight: breezedark
+  fig_caption: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+The data set refers to clients of a wholesale distributor. It includes the annual spending in monetary units (m.u.) on diverse product categories. This data set download from [UCI Machine Learning Repository](https://archive.ics.uci.edu/ml/datasets/Wholesale+customers).
+
+My goal today is to use various clustering techniques to segment customers. Clustering is an unsupervised learning algorithm that tries to cluster data based on their similarity. Thus, there is no outcome to be predicted, and the algorithm just tries to find patterns in the data.
+
+The goal of this algorithm is to find groups in the data, with the number of groups represented by the variable K. The algorithm works iteratively to assign each data point to one of K groups based on the features that are provided. Data points are clustered based on feature similarity. The results of the K-means clustering algorithm are:
+
+## Import Library
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(magrittr)
+library(tidyverse)
+library(corrplot)
+library(cluster) 
+library(gridExtra)
+library(factoextra)
+```
+
+## Load Data
+```{r}
+customer <- read.csv("./data/wholesale-customers.csv")
+head(customer)
+```
+Attribute Information:
+
+1. `FRESH` - annual spending (m.u.) on fresh products (Continuous)
+2. `MILK` - annual spending (m.u.) on milk products (Continuous)
+3. `GROCERY` - annual spending (m.u.)on grocery products (Continuous)
+4. `FROZEN` - annual spending (m.u.)on frozen products (Continuous)
+5. `DETERGENTS_PAPER`- annual spending (m.u.) on detergents and paper products (Continuous)
+6. `DELICATESSEN` - annual spending (m.u.)on and delicatessen products (Continuous);
+7. `CHANNEL` - customers Channel - Horeca (Hotel/Restaurant/Cafe) or Retail channel (Nominal)
+8. `REGION` - customers Region Lisnon, Oporto or Other (Nominal)
+
+
+```{r}
+summary(customer)
+```
+
+Well, the summary shows large difference in min and max spending of customers , this gives initial hint that there are low as well as high spending clients to distributer.
+
+Check missing data in dataset
+```{r}
+sum(is.na(customer))
+```
+
+# Data Preprocessing
+
+All the attributes are of same scale except `channel` and `region`. We can ignore those attributes for clustering and normalization is not required.
+
+```{r}
+customer %<>%
+  mutate(Channel = ifelse(Channel == 1, "Horeca", "Retail"),
+         Region = case_when(Region == 1 ~ "Lisbon",
+                            Region == 2 ~ "Oporto",
+                            Region == 3 ~ "Others"))
+
+head(customer)
+```
+
+As we don’t want the clustering algorithm to depend to an arbitrary variable unit, we start by scaling/standardizing the data using the R function scale:
+
+```{r}
+customer_sc <- as_tibble(scale(customer[3:8]))
+
+head(customer_sc)
+```
+
+As of now the Channel and Region columns are excluded as they do not refer to spending information.
+
+# Clustering
+## KMeans
+KMeans algorithm (also referred as Lloyd’s algorithm) is the most commonly used unsupervised machine learning algorithm used to partition the data into a set of k groups or clusters.
+
+## How KMeans works?
+
+1. Define the number of clusters (k).
+2. Initialize k centroids by randomly.
+3. Assignment Step: Assign each observation to the closest centroid (center-point) by calculting least squared euclidean distance between centroids and observations. (i.e. least squared euclidean distance between assigned center and observation should be minimum than other centers).
+4. Update Step: Calculate the new means as centroids for new clusters.
+5. Repeat both assignment and update step (i.e. steps 3 & 4) until convergence (minimum total sum of square) or maximum iteration is reached
+
+## Determining optimal number of clusters (k)
+Before we do the actual clustering, we need to identity the Optimal number of clusters (k) for this data set of wholesale customers. The popular way of determining number of clusters are
+
+1. Elbow Method
+2. Silhouette Method
+3. Gap Static Method
+
+Elbow and Silhouette methods are direct methods and gap statistic method is the statistics method.
+
+In this demonstration, we are going to see how silhouette method is used.
+```{r warning=FALSE}
+set.seed(212)
+
+fviz_nbclust(customer_sc , kmeans, method = "wss")
+```
+The elbow method graph do not show a sharp knee bend in this case, but we can consider k value as 5 .
+
+## Silhouette method
+
+```{r}
+set.seed(212)
+
+fviz_nbclust(customer_sc, kmeans, method = "silhouette")
+```
+
+Silhouette method shows that optimal number of cluster are 2.
+
+## Gap Statistic
+```{r}
+set.seed(212)
+gap_stat <- clusGap(customer_sc, FUN = kmeans, nstart = 25,
+                    K.max = 10, B = 50)
+
+fviz_gap_stat(gap_stat)
+```
+
+Gap Statistic method shows that optimal number of clusters are 3.
+
+With above estimates for K , we will compute Kmeans clustering for K = 2 ,3 and 5. We can also view our results by using fviz_cluster. This provides a nice illustration of the clusters. If there are more than two dimensions (variables) fviz_cluster will perform principal component analysis (PCA) and plot the data points according to the first two principal components that explain the majority of the variance.
+```{r}
+set.seed(212)
+
+k2 <- kmeans(customer_sc, centers = 2, nstart = 30)
+k3 <- kmeans(customer_sc, centers = 3, nstart = 30)
+k5 <- kmeans(customer_sc, centers = 5, nstart = 30)
+
+# plots to compare
+p1 <- fviz_cluster(k2, geom = "point", data = customer_sc) + ggtitle("k = 2")
+p2 <- fviz_cluster(k3, geom = "point",  data = customer_sc) + ggtitle("k = 3")
+p3 <- fviz_cluster(k5, geom = "point",  data = customer_sc) + ggtitle("k = 4")
+
+grid.arrange(p1, p2, p3, nrow = 2)
+```
+
+Above visual assessment shows 2 and 3 clusters seperate the data in distinct group, also calculated by silhoutte and gap statistic method.
+
+Let’s have a look at cluster details in above cases.
+```{r}
+print(k2)
+```
+
+```{r}
+print(k3)
+```
+
+From above details we can conclude that cluster size of 3 will be suitable for us, as it separates the high variation observations in a seperate group. This cluster can include potential high spending customers .
+
+Thus we will calculate our final analysis using 3 as optimal clusters.
+```{r}
+set.seed(212)
+final <- kmeans(customer_sc, 3, nstart = 30)
+print(final)
+```
+
+```{r}
+fviz_cluster(final, geom = "point",  data = customer_sc)
+```
+
+```{r}
+cluster_mean <- customer_sc %>%
+  mutate(Cluster = final$cluster) %>%
+  group_by(Cluster) %>%
+  summarise_all("mean")
+
+cluster_mean
+```
+
+```{r}
+# Visualize customer segments with average product spending  
+
+cluster_mean %>% 
+  gather(Product, MU, Fresh:Delicassen)%>%
+    ggplot(aes(x=Product , y = MU, fill = Product)) + geom_col(width = 0.5) + 
+              facet_grid(.~ Cluster)+ 
+                      scale_fill_brewer(palette = "Accent")+
+                          ylab("Customer Spending in Monetory Units") +
+                    ggtitle("Customer Segments with Average Product Spending")+
+                                    theme(axis.text.x = element_blank(),
+                                          axis.ticks.x = element_blank(),
+                                          axis.title.x = element_blank())
+```
+
+Above statistics and its visual analysis shows that customer spending habits vary in each segment. We will conclude them in our last section.
+
+Now let’s analyse the Channel and Region distribution in each cluster.
+
+```{r}
+# Channel and Region in Cluster 1/Segment 1
+
+customer[1:2] %>%
+  mutate(Cluster = final$cluster) %>%
+  filter(Cluster == 1) %>% ungroup() %>% count(Channel , Region)
+```
+
+
+# Conclusion
+From above analysis we can conclude below observations or customer spending habits of each segment identified in clustered data :
+
+Segment 1: This segment best represent and contains only Retail customers who spend mainly on Groceries , Milk followed by Detergents and papers and then on Fresh products.
+
+Segment 2: This segment contains only few Hotel/Restaurant/Cafe customers who spend heavily on Fresh , Frozen followed by Milk and Groceries. And also have highest median spending on Delicassen.These customers form a well seperated group with these spending habit.
+
+Segment 3: This segment consist of majority Hotel/Restaurant/Cafe customers along with Retail Customers who spend decently on Fresh followed by Groceries and Milk,but spend least on Detergents_Paper and Delicassen in all groups.
+
+This concludes our customer segmentation exercise using K-Means algorithm.

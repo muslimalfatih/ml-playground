@@ -1,0 +1,161 @@
+---
+title: "Exploring Retail Dataset"
+author: "Muslim Al Fatih"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: 
+        collapsed: false
+    number_sections: false
+    theme: flatly
+    highlight: breezedark
+  fig_caption: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This data contains sales record included the profit or loss from a retail company. This global retail company sells Office Supplies, Furniture and Technology stuff. The buyers are coming from different segment such as Corporate, Home Office until individual consumer.
+
+
+## Exploratory Data
+
+### Load Library
+```{r message=FALSE, warning=FALSE}
+library(readr)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(DataExplorer)
+```
+
+### Read Data
+```{r}
+retail <- read.csv("data/retail.csv")
+head(retail)
+```
+
+### Data Structure and Information
+
+```{r}
+names(retail)
+```
+
+**Data contains the following variables with the corresponding descriptions:**
+
+* Order.ID : Id of order.
+* Order.Date : Date of Order.
+* Ship.Date : Date of shipping.
+* Ship.Mode : type of shipment.
+* Customer.ID : Id of Customer.
+* Segment : Customers segment.
+* Product.ID : Id of Product.
+* Category : have 3 levels “Furniture”,“Office Supplies”,“Technology”
+* sub.category: more specific categories
+* Product.Name: Name of product that was sold.
+* Sales : How much earning from each sale.
+* Quantity : Quantity of item sold.
+* Discount : How much Discount was given for each sale.
+* Profit : How much can a company earn from each sale.
+
+## Data Cleansing and Preprocessing
+
+**Check missing data in dataset**
+```{r}
+colSums(is.na(retail))
+```
+
+There are data types that are not suitable. Then, the data type will be changed to be suitable for analysis purposes.
+
+```{r}
+retail$Order.ID <- as.character(retail$Order.ID)
+retail$Customer.ID <- as.character(retail$Customer.ID)
+retail$Product.ID <- as.character(retail$Product.ID)
+retail$Product.Name <- as.character(retail$Product.Name)
+retail$Order.Date <-  as.Date(retail$Order.Date, "%m/%d/%y")
+retail$Ship.Date <-  as.Date(retail$Ship.Date, "%m/%d/%y")
+retail <- retail[, -1]
+str(retail)
+```
+
+
+## Data Analysis
+```{r}
+summary(retail)
+```
+
+```{r}
+sum(retail$Quantity)
+```
+
+```{r}
+sum(retail$Sales)
+```
+
+```{r}
+sum(retail$Profit)
+```
+
+### Sales Data Analyst
+
+* Sales will start to rise in March and return to decline in April
+* On the month of May to August sales will fluctuate
+* On month sales September be rising sharply and in October will decline sharply
+* Sales will always decline at the beginning of the year, starting from the decline in January to February. This means that at the beginning of the new year the customer will think to stop shopping
+* The end of the year is the best sale, this happens from November to December.
+
+
+Top 3 most popular subcategories
+```{r}
+first_class = retail[retail$Ship.Mode == 'First Class',]
+ship_mode <- aggregate(Quantity ~ Segment + Ship.Mode, data = first_class, FUN=sum)
+top_ship <- ship_mode[order(ship_mode$Quantity, decreasing = T), ]
+top_ship
+```
+
+
+What make sale increasing? Is it because of a discount?
+
+```{r}
+retail$Month <- month(retail$Order.Date, label=T)
+retail_discount <- xtabs(formula = Quantity ~ Month + Discount, data = retail)
+
+heatmap(retail_discount, Rowv = NA, Colv = NA, cexCol = 0.8, scale = "row")
+```
+
+Based on this heatmap, many products are sold without discounts. The dark color is on without a discount and a 20% discount. This can be mean, customers are familiar and comfortable shopping at the company. so, companies do not need to hold large discounts to attract the attention of customers.
+
+
+### Customer Data Analyst
+
+Find out the most buyer segments in each category and the type of shipping that the customer likes.
+
+```{r}
+plot(xtabs(Sales~Segment+Category,retail))
+```
+
+
+```{r}
+top5 <- aggregate(Profit ~ Sub.Category, retail, sum)
+  
+```
+
+
+
+## Summary
+Company have sold total 37873 items with total Sales 2297201 and profit 286397 in 4 years. This company selling 3 main category : Furniture, Office supplies and Technology. From this category, Technology has the highest sales. Sales will always decline at the beginning of the year and The end of the year is the best sale, this happens from November to December.
+
+Buyer who buying the product was coming from different segment, such as : Consumer, Corporate and Home Office. ‘Consumer’ was giving the higest ammount of sales. Shipping option consist of 4 types : First Class, Same day, Second class, and Standart class. Based on data, from all segment, most of them are choosing Standart Class as their shipping option.The average customer retention rate is around 13.89% -25.13% per month
+
+
+### Recommendation
+1. Apply strategies to increase sales in low sales months, the decline could be due to low visitor arrivals.
+2. Technology was selling with highest sales value but contradictory max loss was coming from Technology section as well. This is caused because discound given was too hight (80%) without think about the profit.
+3. Need to increase market target at Corporate segment and home office segment, we may give them more discount with taking back the profit to company
+4. It’s better to hold a discount between April-August because sales are still up and down. The results were surprising because there were more than one loss period.
+5. Implementing price optimization to helps regulate and control pricing decisions across every category and product type.
+6. Maintain customer and company relationships so that customers are always active in buying.
