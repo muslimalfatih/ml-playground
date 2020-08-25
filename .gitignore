@@ -16,3 +16,13 @@
 
 .RDataTmp
 rproject.Rproj
+
+.env
+.idea
+pypy
+.vscode
+
+# Jupyter Notebook
+config.py
+__pycache__
+.ipynb_checkpoints

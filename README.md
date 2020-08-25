@@ -1,9 +1,10 @@
-# R Projects
+# ML Playground
 
-List of R Project. Some of my R Project publish on [R Pubs](https://rpubs.com/muslimalfatih) and [Shiny Apps](https://www.shinyapps.io/).
+List of Machine Learning Project. Some of my mini projects publish on [R Pubs](https://rpubs.com/muslimalfatih) and [Shiny Apps](https://www.shinyapps.io/).
 
 | Project | Description |
 | ------- | ----------- |
+| [Twitter Sentiment Analysis](#) | Twitter sentiment analysis |
 | [Ride Sharing Time Series](https://rpubs.com/muslimalfatih/time-series-ride-sharing) | Forecasting ride sharing demand |
 | [Parking Ticket](https://rpubs.com/muslimalfatih/parking-ticket) | Analyze parking infraction |
 | [Customer Segmentation](https://rpubs.com/muslimalfatih/customer-segmentation) | Analyze and interpret customer segments from wholesale distributor |
